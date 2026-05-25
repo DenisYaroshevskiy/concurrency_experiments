@@ -14,7 +14,7 @@
 
 namespace v_broken {
 
-struct rcu_test_smoke_test : rl::test_suite<rcu_test_smoke_test, 2> {
+struct rcu_smoke_test : rl::test_suite<rcu_smoke_test, 2> {
   using config = rl::var<int>;
 
   rl::atomic<const config*> cfg;
@@ -48,4 +48,4 @@ struct rcu_test_smoke_test : rl::test_suite<rcu_test_smoke_test, 2> {
 
 }  // namespace v_broken
 
-int main() { return simulate<v_broken::rcu_test_smoke_test>() ? 0 : 1; }
+int main() { return simulate<v_broken::rcu_smoke_test>() ? 0 : 1; }

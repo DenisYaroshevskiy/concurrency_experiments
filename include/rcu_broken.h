@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <vector>
 
 /*
  * +1 entry,
@@ -28,7 +29,7 @@ struct rcu_domain {
   void synchronize();
 
   tools::mutex readers_mutex;
-  tls* only_reader = nullptr;
+  std::vector<tls*> readers;
 };
 
 struct rcu_domain::tls : tools::nomove {
@@ -37,11 +38,11 @@ struct rcu_domain::tls : tools::nomove {
 
   explicit tls(rcu_domain& domain) : domain_(&domain) {
     tools::lock_guard _{domain_->readers_mutex};
-    domain_->only_reader = this;
+    domain_->readers.push_back(this);
   }
   ~tls() {
     tools::lock_guard _{domain_->readers_mutex};
-    domain_->only_reader = nullptr;
+    std::erase(domain_->readers, this);
    }
 
   void enter() { counter.fetch_add(1); }
@@ -50,14 +51,16 @@ struct rcu_domain::tls : tools::nomove {
 
 inline void rcu_domain::synchronize() {
   tools::lock_guard _{readers_mutex};
-  if (!only_reader) return;
 
-  counter_t first = only_reader->counter.load();
+  for (const tls* reader : readers) {
+    counter_t cur = reader->counter.load();
 
-  if (first % 2 == 0) return;
+    if (cur % 2 == 0) continue;
 
-  while (only_reader->counter.load() == first)
-    tools::this_thread_yield();
+    while (reader->counter.load() == cur) {
+      tools::this_thread_yield();
+    }
+  }
 }
 
 }  // namespace v_broken
