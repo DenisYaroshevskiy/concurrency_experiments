@@ -7,7 +7,7 @@
 #pragma once
 
 #include <atomic_wrappers.h>
-#include <rcu_reading_subsystem.h>
+#include <rcu_reading_subsystem_v1.h>
 #include <rcu_tls_reclaimer.h>
 #include <utils.h>
 
@@ -42,8 +42,8 @@
 
 namespace v3 {
 
-struct rcu_domain : tools::rcu_reading_subsystem {
-  using counter_t = tools::rcu_reading_subsystem::counter_t;
+struct rcu_domain : v1::rcu_reading_subsystem {
+  using counter_t = v1::rcu_reading_subsystem::counter_t;
   using clean_up_task = std::move_only_function<void()>;
 
   struct config {
@@ -51,7 +51,7 @@ struct rcu_domain : tools::rcu_reading_subsystem {
     counter_t stale_gen_threshold = 10;
   };
 
-  using reader_tls = tools::rcu_reading_subsystem::tls;
+  using reader_tls = v1::rcu_reading_subsystem::tls;
   struct reclaim_tls;
 
   rcu_domain() = default;

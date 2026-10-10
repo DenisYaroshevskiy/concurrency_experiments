@@ -6,13 +6,13 @@
 
 #pragma once
 
-#include <rcu_reading_subsystem.h>
+#include <rcu_reading_subsystem_v1.h>
 #include <utils.h>
 
 namespace v1 {
 
-struct rcu_domain : tools::rcu_reading_subsystem {
-  using reader_tls = tools::rcu_reading_subsystem::tls;
+struct rcu_domain : rcu_reading_subsystem {
+  using reader_tls = rcu_reading_subsystem::tls;
   struct reclaim_tls;
 
   void barrier() { synchronize(); }
