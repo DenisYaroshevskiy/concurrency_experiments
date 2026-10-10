@@ -11,6 +11,9 @@
 #include <utils.h>
 
 #include <algorithm>
+#include <cstdint>
+#include <iterator>
+#include <vector>
 
 namespace v4 {
 
@@ -27,11 +30,12 @@ namespace v4 {
  * enter.
  *
  * Once in a while a time of the latest entered reader gets updated.
- *
  */
 class rcu_reading_subsystem {
  public:
   using rcu_time_t = std::uint64_t;
+
+  static constexpr rcu_time_t kVisibilityLag = 3;
 
   class tls;
 
@@ -39,16 +43,20 @@ class rcu_reading_subsystem {
     return current_time_.load(tools::memory_order_relaxed);
   }
   rcu_time_t oldest_known_reader() const {
-    return oldest_known_reader_.load(tools::memory_order_relaxed);
+    return oldest_known_reader_.load(tools::memory_order_acquire);
+  }
+
+  static bool readers_done_with(rcu_time_t update_time,
+                                rcu_time_t oldest_reader) {
+    return update_time + kVisibilityLag <= oldest_reader;
   }
 
   // advancing clock --------
   bool try_advance_clock();
-  void clock_needs_to_be_after(rcu_time_t point)  // pre(time <= current_time);
-      void advance_clock();                       // blocking
+  void advance_clock();  // blocking
 
   bool try_update_oldest_reader();
-  void wait_until_no_one_is_reading(rcu_time_t point);
+  void wait_until_no_one_is_reading(rcu_time_t stamped_before);
 
   void synchronize();
 
@@ -57,35 +65,35 @@ class rcu_reading_subsystem {
   std::vector<tls*> reader_tls_vec_;
 
   tools::mutex current_time_m;
-  tools::atomic<rcu_time_t> current_time_;
+  tools::atomic<rcu_time_t> current_time_{1};
 
-  tools::atomic<rcu_time_t> oldest_known_reader_;
+  tools::atomic<rcu_time_t> oldest_known_reader_{1};
 };
 
 class rcu_reading_subsystem::tls : tools::nomove {
  public:
   explicit tls(rcu_reading_subsystem& s) : subsystem_(&s) {
-    tools::lock_guard _{subsystem_->reader_tls_vec_m};
-    subsystem_->reader_tls_vec.push_back(this);
+    tools::lock_guard _{subsystem_->reader_tls_vec_m_};
+    subsystem_->reader_tls_vec_.push_back(this);
   }
 
   ~tls() {
-    tools::lock_guard _{subsystem_->reader_tls_vec_m};
-    std::iter_swap(std::ranges::find(subsystem_->reader_tls_vec, this),
-                   std::prev(subsystem_->reader_tls_vec.end()));
-    subsystem_->reader_tls_vec.pop_back();
+    tools::lock_guard _{subsystem_->reader_tls_vec_m_};
+    std::iter_swap(std::ranges::find(subsystem_->reader_tls_vec_, this),
+                   std::prev(subsystem_->reader_tls_vec_.end()));
+    subsystem_->reader_tls_vec_.pop_back();
   }
 
   void enter() {
-    counter_t g = subsystem_->current_time();
-    counter_t cur = counter_.load(tools::memory_order_relaxed);
+    rcu_time_t now = subsystem_->current_time();
+    rcu_time_t cur = started_at_.load(tools::memory_order_relaxed);
 
     if (cur) [[unlikely]] {
       ++nested_readers_;
       return;
     }
 
-    counter_.store(g, tools::memory_order_relaxed);
+    started_at_.store(now, tools::memory_order_relaxed);
     tools::asymmetric_thread_fence_light();
   }
   void exit() {
@@ -94,112 +102,103 @@ class rcu_reading_subsystem::tls : tools::nomove {
       return;
     }
 
-    // This light fence is to communicate with rcu::sync.
+    // This light fence is to communicate with the heavy fences after
+    // observing that the reader is done.
     tools::asymmetric_thread_fence_light();
-    counter_.store(0, tools::memory_order_relaxed);
+    started_at_.store(0, tools::memory_order_relaxed);
 
     waiter_.notify_one();
   }
 
-  bool is_reading(counter_t desired) const {
-    counter_t cur = counter_.load(tools::memory_order_relaxed);
-    return 0 < cur && cur < desired;
+  // 0 means not reading.
+  rcu_time_t started_reading_at() const {
+    return started_at_.load(tools::memory_order_relaxed);
   }
 
   // At most one waiter
-  void wait(counter_t desired) {
-    counter_t first_seen = counter_.load(tools::memory_order_relaxed);
-    if (first_seen == 0 || first_seen >= desired) {
+  void wait_if_started_before(rcu_time_t before) {
+    rcu_time_t first_seen = started_at_.load(tools::memory_order_relaxed);
+    if (first_seen == 0 || first_seen >= before) {
       return;
     }
     waiter_.wait(first_seen);
   }
 
  private:
-  friend class rcu_reading_subsystem;
-
   // There is a false sharing in theory here but
   // this is not the case where we expect it to be relevant.
-  tools::atomic<counter_t> counter_{0};
+  tools::atomic<rcu_time_t> started_at_{0};
   std::uint32_t nested_readers_ = 0;
-  tools::atomic_expensive_wait_cheap_notify_simple<counter_t> waiter_{
-      &counter_};
+  tools::atomic_expensive_wait_cheap_notify_simple<rcu_time_t> waiter_{
+      &started_at_};
 
   rcu_reading_subsystem* subsystem_;
 };
 
-bool rcu_reading_subsystem::try_advance_clock() {
-  tools::unique_lock lock{current_time_m, std::try_to_lock};
+inline bool rcu_reading_subsystem::try_advance_clock() {
+  tools::unique_lock lock{current_time_m, tools::try_to_lock};
   if (!lock) {
     return false;
   }
-  tools::atomic_thread_fence_heavy();
-  auto loaded = current_time_.load(std::memory_order_relaxed);
-  current_time.store(loaded + 1, std::memory_order_relaxed);
+  tools::asymmetric_thread_fence_heavy();
+  current_time_.store(current_time_.load(tools::memory_order_relaxed) + 1,
+                      tools::memory_order_relaxed);
+  return true;
 }
 
-void rcu_reading_subsystem::clock_needs_to_be_after(rcu_time_t point) {
-  auto now = current_time();
-  if (now > time) return;
-
+inline void rcu_reading_subsystem::advance_clock() {
   tools::lock_guard _{current_time_m};
-
-  auto now = current_time();
-  if (now > time) return;
-
-  tools::atomic_thread_fence_heavy();
-  current_time.store(now + 1, std::memory_order_relaxed);
+  tools::asymmetric_thread_fence_heavy();
+  current_time_.store(current_time_.load(tools::memory_order_relaxed) + 1,
+                      tools::memory_order_relaxed);
 }
 
-void rcu_reading_subsystem::advance_clock()  // blocking
-{
-  tools::lock_guard _{current_time_m};
-
-  tools::atomic_thread_fence_heavy();
-  auto loaded = current_time_.load(std::memory_order_relaxed);
-  current_time.store(loaded + 1, std::memory_order_relaxed);
-}
-
-bool rcu_reading_subsystem::try_update_oldest_reader() 
-{
-  tools::unique_lock lock{reader_tls_vec_m, std::try_to_lock};
+inline bool rcu_reading_subsystem::try_update_oldest_reader() {
+  tools::unique_lock lock{reader_tls_vec_m_, tools::try_to_lock};
   if (!lock) {
     return false;
   }
 
-  rcu_time_t updated = std::numeric_limis<rcu_time_t>::max();
-  for (auto* tls : reader_tls_vec) {
-    auto started_at = tls->started_reading_at();
+  rcu_time_t oldest = current_time_.load(tools::memory_order_acquire);
+
+  for (const tls* r : reader_tls_vec_) {
+    rcu_time_t started_at = r->started_reading_at();
     if (started_at) {
-      updated = std::min(started_at, updated);
+      oldest = std::min(oldest, started_at);
     }
   }
 
-  // no active readers were found - anytihng before the current time is ok
-  if (updated == std::numeric_limis<rcu_time_t>::max()) {
-    updated = current_time();
+  // A reader with a stale stamp can drag the minimum back but it still sees
+  // everything that the previous watermark covered.
+  if (oldest > oldest_known_reader_.load(tools::memory_order_relaxed)) {
+    oldest_known_reader_.store(oldest, tools::memory_order_release);
   }
-
-  oldest_known_reader_.store(updated, std::memory_order_relaxed);
+  return true;
 }
-void wait_until_no_one_is_reading(rcu_time_t point_at) {
-  // super similar to try_update_oldest_reader
-  // except we use wait logic from the previous sycnhronize
+
+inline void rcu_reading_subsystem::wait_until_no_one_is_reading(
+    rcu_time_t stamped_before) {
+  tools::lock_guard _{reader_tls_vec_m_};
+
+  // Only wait for the readers that are reading now.
+  std::vector<tls*> waiting;
+  waiting.reserve(reader_tls_vec_.size());
+  std::ranges::copy_if(reader_tls_vec_, std::back_inserter(waiting),
+                       [stamped_before](const tls* x) {
+                         rcu_time_t started_at = x->started_reading_at();
+                         return 0 < started_at && started_at < stamped_before;
+                       });
+
+  for (tls* r : waiting) {
+    r->wait_if_started_before(stamped_before);
+  }
 }
 
 inline void rcu_reading_subsystem::synchronize() {
-  auto now = current_time();
+  advance_clock();
+  wait_until_no_one_is_reading(current_time());
 
-  tools::atomic_thread_fence_light();
-
-  clock_needs_to_be_after(current_time());
-  wait_until_no_one_is_reading(now);
-
-  // make sure everything from the readers is visible
-  clock_needs_to_be_after(now + 1);
-
-  tools::atomic_thread_fence_light();
+  advance_clock();
 }
-
 
 }  // namespace v4

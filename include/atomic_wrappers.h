@@ -16,6 +16,8 @@
 #include <relacy/var.hpp>
 #include <functional>
 #include <memory>
+#include <mutex>
+#include <utility>
 #include "shared_ptr.h"
 #else
 #include <atomic>
@@ -92,6 +94,56 @@ struct var {
 
 using rl::lock_guard;
 
+using std::try_to_lock;
+
+// rl::unique_lock has no try_to_lock and std::unique_lock loses the debug info.
+template <typename M>
+class unique_lock {
+ public:
+  unique_lock(M& m, rl::debug_info_param info DEFAULTED_DEBUG_INFO)
+      : m_(&m), info_(info) {
+    m_->lock(info);
+    locked_ = true;
+  }
+
+  unique_lock(M& m, std::try_to_lock_t,
+              rl::debug_info_param info DEFAULTED_DEBUG_INFO)
+      : m_(&m), info_(info) {
+    locked_ = m_->try_lock(info);
+  }
+
+  unique_lock(unique_lock&& x) noexcept
+      : m_(std::exchange(x.m_, nullptr)),
+        info_(x.info_),
+        locked_(std::exchange(x.locked_, false)) {}
+
+  unique_lock& operator=(unique_lock&& x) noexcept {
+    if (this == &x) return *this;
+    if (locked_) m_->unlock(info_);
+    m_ = std::exchange(x.m_, nullptr);
+    info_ = x.info_;
+    locked_ = std::exchange(x.locked_, false);
+    return *this;
+  }
+
+  ~unique_lock() {
+    if (locked_) m_->unlock(info_);
+  }
+
+  void unlock(rl::debug_info_param info DEFAULTED_DEBUG_INFO) {
+    m_->unlock(info);
+    locked_ = false;
+  }
+
+  bool owns_lock() const noexcept { return locked_; }
+  explicit operator bool() const noexcept { return locked_; }
+
+ private:
+  M* m_;
+  rl::debug_info info_;
+  bool locked_ = false;
+};
+
 void asymmetric_thread_fence_light(rl::debug_info_param info DEFAULTED_DEBUG_INFO) {
   rl::atomic_thread_fence(memory_order_seq_cst, info);
 }
@@ -119,6 +171,11 @@ using mutex = std::mutex;
 
 template <typename... Ts>
 using lock_guard = std::lock_guard<Ts...>;
+
+template <typename M>
+using unique_lock = std::unique_lock<M>;
+
+using std::try_to_lock;
 
 void this_thread_yield() { std::this_thread::yield(); }
 
