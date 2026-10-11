@@ -64,7 +64,7 @@ class rcu_reading_subsystem {
   tools::mutex reader_tls_vec_m_;
   std::vector<tls*> reader_tls_vec_;
 
-  tools::mutex current_time_m;
+  tools::mutex current_time_m_;
   tools::atomic<rcu_time_t> current_time_{1};
 
   tools::atomic<rcu_time_t> oldest_known_reader_{1};
@@ -136,7 +136,7 @@ class rcu_reading_subsystem::tls : tools::nomove {
 };
 
 inline bool rcu_reading_subsystem::try_advance_clock() {
-  tools::unique_lock lock{current_time_m, tools::try_to_lock};
+  tools::unique_lock lock{current_time_m_, tools::try_to_lock};
   if (!lock) {
     return false;
   }
@@ -147,7 +147,7 @@ inline bool rcu_reading_subsystem::try_advance_clock() {
 }
 
 inline void rcu_reading_subsystem::advance_clock() {
-  tools::lock_guard _{current_time_m};
+  tools::lock_guard _{current_time_m_};
   tools::asymmetric_thread_fence_heavy();
   current_time_.store(current_time_.load(tools::memory_order_relaxed) + 1,
                       tools::memory_order_relaxed);
@@ -159,7 +159,7 @@ inline bool rcu_reading_subsystem::try_update_oldest_reader() {
     return false;
   }
 
-  rcu_time_t oldest = current_time_.load(tools::memory_order_acquire);
+  rcu_time_t oldest = current_time_.load(tools::memory_order_relaxed);
 
   for (const tls* r : reader_tls_vec_) {
     rcu_time_t started_at = r->started_reading_at();
@@ -171,7 +171,7 @@ inline bool rcu_reading_subsystem::try_update_oldest_reader() {
   // A reader with a stale stamp can drag the minimum back but it still sees
   // everything that the previous watermark covered.
   if (oldest > oldest_known_reader_.load(tools::memory_order_relaxed)) {
-    oldest_known_reader_.store(oldest, tools::memory_order_release);
+    oldest_known_reader_.store(oldest, tools::memory_order_relaxed);
   }
   return true;
 }

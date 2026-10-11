@@ -50,8 +50,8 @@ struct rcu_domain : rcu_reading_subsystem {
 
  private:
   struct stamped_task {
-    rcu_time_t retired_at;
-    clean_up_task task;
+    rcu_time_t retired_at_;
+    clean_up_task task_;
   };
   using task_list = std::vector<stamped_task>;
   using reclaim_mailbox = tools::owner_stealer<task_list>;
@@ -96,14 +96,14 @@ inline rcu_domain::task_list rcu_domain::take_ready(task_list& v) const {
   task_list res;
   v.erase(tools::partition_to(v.begin(), v.end(), std::back_inserter(res),
                               [&](const stamped_task& t) {
-                                return readers_done_with(t.retired_at, oldest);
+                                return readers_done_with(t.retired_at_, oldest);
                               }),
           v.end());
   return res;
 }
 
 inline void rcu_domain::run(task_list& v) {
-  for (auto& t : v) t.task();
+  for (auto& t : v) t.task_();
 }
 
 inline void rcu_domain::reclaim_tls::background_task() {
