@@ -30,16 +30,16 @@ struct count_base {
 };
 
 template <typename T>
-struct store_together : count_base {
+struct store_together final : count_base {
   T data;
-  ~store_together() final = default;
+  ~store_together() override = default;
 };
 
 template <typename T>
-struct store_separately : count_base {
+struct store_separately final : count_base {
   T* data;
   explicit store_separately(T* p) : data(p) {}
-  ~store_separately() final { delete data; }
+  ~store_separately() override { delete data; }
 };
 
 }  // namespace detail

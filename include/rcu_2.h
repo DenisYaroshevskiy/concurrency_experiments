@@ -8,7 +8,7 @@
 
 #include <atomic_wrappers.h>
 #include <owner_stealer.h>
-#include <rcu_reading_subsystem.h>
+#include <rcu_reading_subsystem_v1.h>
 #include <utils.h>
 
 #include <functional>
@@ -26,10 +26,10 @@
  */
 namespace v2 {
 
-struct rcu_domain : tools::rcu_reading_subsystem {
+struct rcu_domain : v1::rcu_reading_subsystem {
   using clean_up_task = std::move_only_function<void()>;
 
-  using reader_tls = tools::rcu_reading_subsystem::tls;
+  using reader_tls = v1::rcu_reading_subsystem::tls;
   struct reclaim_tls;
 
   ~rcu_domain() { barrier(); }

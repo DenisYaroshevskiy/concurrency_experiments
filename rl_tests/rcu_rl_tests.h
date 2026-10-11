@@ -20,9 +20,19 @@
 #include <memory>
 
 template <typename T>
-concept has_background_task = requires(T& x) {
+concept has_domain_background_task = requires(T& x) {
   { x.background_task() };
 };
+
+// Any thread with a reclaim_tls can do the background work.
+template <typename T>
+concept has_tls_background_task = requires(typename T::reclaim_tls& x) {
+  { x.background_task() };
+};
+
+template <typename T>
+concept has_background_task =
+    has_domain_background_task<T> || has_tls_background_task<T>;
 
 template <template <typename> class test, typename Domain,
           rl::thread_id_t static_thread_count_param>
@@ -49,8 +59,15 @@ struct rcu_test_base
   void thread(unsigned idx) {
     if constexpr (has_background_task<Domain>) {
       if (idx == static_thread_count_param) {
-        for (int i = 0; i != 3; ++i) {
-          domain.background_task();
+        if constexpr (has_tls_background_task<Domain>) {
+          auto tls = make_reclaim_tls();
+          for (int i = 0; i != 3; ++i) {
+            tls.background_task();
+          }
+        } else {
+          for (int i = 0; i != 3; ++i) {
+            domain.background_task();
+          }
         }
         return;
       }
@@ -321,7 +338,7 @@ struct rcu_test_retire_then_tls_death
   void thread_(unsigned idx) {
     if (idx == 0) {
       auto tls = this->make_reclaim_tls();
-      this->retire(tls, &deleted, [this](rl::atomic<int>* p) {
+      this->retire(tls, &deleted, [](rl::atomic<int>* p) {
         p->store(1, rl::memory_order_relaxed);
       });
     } else {
@@ -396,6 +413,52 @@ struct rcu_test_nested_read : rcu_test_base<rcu_test_nested_read, Domain, 2> {
     auto tls = this->make_reclaim_tls();
     auto* upd = new rl::var<int>(2);
     this->retire(tls, config.exchange(upd, rl::memory_order_acq_rel));
+  }
+
+  void thread_(unsigned idx) {
+    if (idx != 0) thread_read();
+    else thread_write();
+  }
+
+  void after() {
+    this->barrier();
+    delete config.load(rl::memory_order_acquire);
+  }
+};
+
+// Several retires from one thread while a reader keeps reading:
+// retire() can run its own earlier tasks while the reader is active.
+template <typename Domain>
+struct rcu_test_retire_many : rcu_test_base<rcu_test_retire_many, Domain, 2> {
+  static constexpr int kUpdates = 3;
+
+  rl::atomic<rl::var<int>*> config = 0;
+
+  void before() { config.store(new rl::var<int>(0), rl::memory_order_release); }
+
+  void thread_read() {
+    auto tls = this->make_reader_tls();
+    for (int i = 0; i != 2; ++i) {
+      tls.enter();
+      rl::var<int>* loaded = config.load(rl::memory_order_acquire);
+      int val = (*loaded)($);
+      tls.exit();
+      RL_ASSERT(0 <= val && val <= kUpdates);
+    }
+  }
+
+  void thread_write() {
+    auto tls = this->make_reclaim_tls();
+    for (int i = 1; i <= kUpdates; ++i) {
+      auto* upd = new rl::var<int>(i);
+      // relacy doesn't treat delete as a write: write to catch a missing
+      // happens-before with the readers.
+      this->retire(tls, config.exchange(upd, rl::memory_order_acq_rel),
+                   [](rl::var<int>* p) {
+                     (*p)($) = -1;
+                     delete p;
+                   });
+    }
   }
 
   void thread_(unsigned idx) {

@@ -12,7 +12,7 @@
 
 #include <algorithm>
 
-namespace tools {
+namespace v1 {
 
 /*
  * The reader-tracking half of RCU.
@@ -129,4 +129,4 @@ inline void rcu_reading_subsystem::synchronize() {
   tools::asymmetric_thread_fence_heavy();
 }
 
-}  // namespace tools
+}  // namespace v1

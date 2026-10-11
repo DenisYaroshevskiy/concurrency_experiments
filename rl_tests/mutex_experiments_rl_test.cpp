@@ -59,5 +59,7 @@ struct mutex_gives_barrier : rl::test_suite<mutex_gives_barrier<M>, 3> {
 
 int main() {
   return simulate_exhaustive<mutex_gives_barrier<rl::mutex>>() &&
-         simulate_exhaustive<mutex_gives_barrier<tools::atrocious_mutex>>();
+         simulate_exhaustive<mutex_gives_barrier<tools::atrocious_mutex>>()
+             ? 0
+             : 1;
 }

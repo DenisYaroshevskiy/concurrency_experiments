@@ -34,5 +34,7 @@ struct notify_one_vs_all : rl::test_suite<notify_one_vs_all<UseNotifyAll>, 2> {
 
 int main() {
   return simulate_exhaustive<notify_one_vs_all<false>>() &&
-         simulate_exhaustive<notify_one_vs_all<true>>();
+         simulate_exhaustive<notify_one_vs_all<true>>()
+             ? 0
+             : 1;
 }
