@@ -94,6 +94,7 @@ inline rcu_domain::task_list rcu_domain::take_ready(task_list& v) const {
   rcu_time_t oldest = oldest_known_reader();
 
   task_list res;
+  res.reserve(v.size());
   v.erase(tools::partition_to(v.begin(), v.end(), std::back_inserter(res),
                               [&](const stamped_task& t) {
                                 return readers_done_with(t.retired_at_, oldest);

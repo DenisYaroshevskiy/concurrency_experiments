@@ -338,7 +338,7 @@ struct rcu_test_retire_then_tls_death
   void thread_(unsigned idx) {
     if (idx == 0) {
       auto tls = this->make_reclaim_tls();
-      this->retire(tls, &deleted, [this](rl::atomic<int>* p) {
+      this->retire(tls, &deleted, [](rl::atomic<int>* p) {
         p->store(1, rl::memory_order_relaxed);
       });
     } else {

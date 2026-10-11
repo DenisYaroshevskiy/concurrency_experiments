@@ -195,9 +195,11 @@ inline void rcu_reading_subsystem::wait_until_no_one_is_reading(
 }
 
 inline void rcu_reading_subsystem::synchronize() {
+  // TODO: I don't think we have to advance_clock ourselves. 
+  // If someone interfeers and advances the clock, we should be able to pull that off too.
   advance_clock();
   wait_until_no_one_is_reading(current_time());
-
+  // This makes sure that everything from the readers is visible.
   advance_clock();
 }
 

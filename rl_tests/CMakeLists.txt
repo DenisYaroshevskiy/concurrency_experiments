@@ -1,6 +1,6 @@
 
 function(add_rl_test name source)
-    set(compiler_options -g -Wall -Wno-deprecated-copy)
+    set(compiler_options -g -Wall -Wno-deprecated-copy -Wno-inline-new-delete)
     add_executable(${name})
     target_sources(${name} PRIVATE ${source})
     target_compile_options(${name} PRIVATE ${compiler_options})
