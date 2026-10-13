@@ -22,6 +22,9 @@ class heavy_fence_clock {
  public:
   using count_t = std::uint64_t;
 
+  // We start counting with 1 to keep 0 as a special value.
+  static constexpr count_t kInitialClockValue = 1u;
+
   // trigger heavy fence--------------------------
 
   // Unconditionally do a heavy fence.
@@ -56,7 +59,7 @@ class heavy_fence_clock {
   void do_heavy_fence();  // m_ has to be locked
 
   tools::mutex m_;
-  tools::atomic<count_t> count_{1};
+  tools::atomic<count_t> count_{kInitialClockValue};
 };
 
 inline void heavy_fence_clock::do_heavy_fence() {
