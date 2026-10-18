@@ -16,6 +16,16 @@ bool simulate(int iterations = 100'000) {
   return rl::simulate<Test>(params);
 }
 
+// Every schedule with at most context_bound preemptions.
+// Finds bugs that need a specific interleaving the random scheduler misses.
+template <typename Test>
+bool simulate_context_bound(unsigned context_bound) {
+  rl::test_params params;
+  params.search_type = rl::fair_context_bound_scheduler_type;
+  params.context_bound = context_bound;
+  return rl::simulate<Test>(params);
+}
+
 template <typename Test>
 bool simulate_exhaustive() {
   rl::test_params params;

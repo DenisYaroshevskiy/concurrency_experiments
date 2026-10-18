@@ -40,6 +40,14 @@ void this_thread_yield(rl::debug_info_param info DEFAULTED_DEBUG_INFO) {
   rl::yield(1, info);
 }
 
+// A place where a thread switch matters for the tests.
+// The context bound search switches here without counting a preemption.
+// Does nothing in prod.
+inline void important_pause_to_test(
+    rl::debug_info_param info DEFAULTED_DEBUG_INFO) {
+  rl::yield(1, info);
+}
+
 inline constexpr auto memory_order_relaxed = rl::memory_order::relaxed;
 inline constexpr auto memory_order_acquire = rl::memory_order::acquire;
 inline constexpr auto memory_order_release = rl::memory_order::release;
@@ -178,6 +186,8 @@ using unique_lock = std::unique_lock<M>;
 using std::try_to_lock;
 
 void this_thread_yield() { std::this_thread::yield(); }
+
+inline void important_pause_to_test() {}
 
 void thread_fence_seq_cst() { std::atomic_thread_fence(std::memory_order_seq_cst); }
 
