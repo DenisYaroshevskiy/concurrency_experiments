@@ -34,7 +34,9 @@ class heavy_fence_clock {
   // Makes sure that the heavy fence "happened after"
   // we enter this function. (might be us, might be someone else but we get to
   // use that one).
-  void heavy_fence_ensure();
+  // Returns n: heavy fence n is that fence (or a later one) and it
+  // happened before we return.
+  count_t heavy_fence_ensure();
 
   // Do a heavy fence if noone else is doing it at this point.
   // Returns true iff you got a fence.
@@ -55,6 +57,11 @@ class heavy_fence_clock {
   //   upcoming heavy fence.
   light_fence_return light_fence() const;
 
+  // The count, no fence.
+  // Followed by a light fence it's in_the_past of that fence.
+  // Useful when something has to be stored between the load and the fence.
+  count_t now() const;
+
  private:
   void do_heavy_fence();  // m_ has to be locked
 
@@ -73,13 +80,14 @@ inline void heavy_fence_clock::heavy_fence_unconditional() {
   do_heavy_fence();
 }
 
-inline void heavy_fence_clock::heavy_fence_ensure() {
+inline auto heavy_fence_clock::heavy_fence_ensure() -> count_t {
   count_t after = light_fence().in_the_future;
 
   tools::lock_guard _{m_};
   if (count_.load(tools::memory_order_relaxed) < after) {
     do_heavy_fence();
   }
+  return count_.load(tools::memory_order_relaxed);
 }
 
 inline bool heavy_fence_clock::heavy_fence_try() {
@@ -109,6 +117,10 @@ inline auto heavy_fence_clock::light_fence() const -> light_fence_return {
   // So + 2.
 
   return {before, loaded_after + 2};
+}
+
+inline auto heavy_fence_clock::now() const -> count_t {
+  return count_.load(tools::memory_order_relaxed);
 }
 
 }  // namespace tools

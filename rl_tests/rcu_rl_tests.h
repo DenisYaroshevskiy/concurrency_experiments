@@ -34,6 +34,14 @@ template <typename T>
 concept has_background_task =
     has_domain_background_task<T> || has_tls_background_task<T>;
 
+// The periodic steps of retire, that can be called directly.
+// The tests do them after every retire, so that they run at all.
+template <typename T>
+concept has_tls_retire_steps = requires(typename T::reclaim_tls& x) {
+  { x.advance_clock() };
+  { x.refresh_and_steal() };
+};
+
 template <template <typename> class test, typename Domain,
           rl::thread_id_t static_thread_count_param>
 struct rcu_test_base
@@ -91,6 +99,10 @@ struct rcu_test_base
     auto msg = std::format("retire({})", static_cast<const void*>(ptr));
     rl::ctx().exec_log_msg(info, msg.c_str());
     tls.retire(ptr, d);
+    if constexpr (has_tls_retire_steps<Domain>) {
+      tls.advance_clock();
+      tls.refresh_and_steal();
+    }
   }
 };
 
